@@ -1,0 +1,7 @@
+interface:
+  display_name: "Deep Paper Reader"
+  short_description: "论文精读与讲解：速览、精读、带读，直觉+公式+实验+原文证据"
+  default_prompt: "请用 $deep-paper-reader 精读工作目录中的论文 PDF：先给速览地图，再按 full 模式输出中文 Markdown 笔记文件，并给出原文证据索引。"
+
+policy:
+  allow_implicit_invocation: true

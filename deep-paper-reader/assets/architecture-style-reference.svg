@@ -1,0 +1,409 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2600" viewBox="0 0 1600 2600" role="img" aria-labelledby="title desc">
+<title id="title">E²-LLM 架构与三阶段训练</title>
+<desc id="desc">A 区为推理时的模型结构：EEG 经 patch 嵌入、EEGPT 编码器和 Projector 变成连续向量，与文本嵌入和边界 token 拼成输入序列，由 Qwen3 以先描述后结论的 CoT 格式生成回答。B–D 区为三阶段训练，用边框和标签区分可训练与冻结模块，并画出监督、梯度和跨阶段参数继承。E 区列出关键结果与消融。</desc>
+<defs>
+<marker id="forward" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#4F7FB8"/></marker>
+<marker id="supervise" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#333"/></marker>
+<marker id="gradient" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#B0652F"/></marker>
+<marker id="inherit" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#7D7D7D"/></marker>
+<style>
+text{font-family:'Times New Roman','Cambria Math','SimSun','Noto Serif CJK SC',serif;fill:#171717;font-size:26px}
+.title{font-size:36px;font-weight:bold}.heading{font-size:30px;font-weight:bold}.bold{font-weight:bold}
+.body{font-size:24px}.note{font-size:24px;fill:#555}
+.mono{font-family:Consolas,'Courier New',monospace;font-size:24px}
+.forward{fill:none;stroke:#4F7FB8;stroke-width:2.6}
+.supervise{fill:none;stroke:#333;stroke-width:2}
+.gradient{fill:none;stroke:#B0652F;stroke-width:2.2;stroke-dasharray:9 5}
+.inherit{fill:none;stroke:#7D7D7D;stroke-width:2.4;stroke-dasharray:2 6;stroke-linecap:round}
+.selected .module-bg,[data-module]:focus .module-bg{stroke:#1F3A5F;stroke-width:4;stroke-dasharray:none}
+[data-module]:focus{outline:none}
+.dimmed{opacity:.18}
+</style></defs>
+<rect x="0" y="0" width="1600" height="2600" fill="#FFF" />
+<text x="40" y="52" class="title" text-anchor="start">E²-LLM 架构与三阶段训练</text>
+<text x="1560" y="52" class="body" text-anchor="end">EEG + 文本 → 情绪分析回答</text>
+<text x="40" y="92" class="note" text-anchor="start">A：推理时的模型结构　B–D：三阶段训练（参数更新视角，不是另一条串联网络）　E：关键结果</text>
+<g id="section-model" data-section="model">
+<rect x="20" y="115" width="1560" height="770" fill="none" stroke="#C9CED4" stroke-width="1.4" stroke-dasharray="7 5"/>
+<text x="40" y="157" class="heading" text-anchor="start">A 模型结构（推理时）</text>
+<text x="1560" y="157" class="note" text-anchor="end">推理权重：θ<tspan dy="6.7" font-size="16.8">1</tspan><tspan dy="-6.7"> · ψ</tspan><tspan dy="6.7" font-size="16.8">3</tspan><tspan dy="-6.7"> · ω + LoRA　｜　§3.2.1 · Eq. 1–5</tspan></text>
+<g data-module="input" data-label="EEG input X">
+<title>预处理后的单段 EEG：58 个电极、4 s、256 Hz，形状 58 × 1024 由 §3.1 推算。多 EEG 任务中每段分别经过编码器和 Projector。</title>
+<rect x="40" y="185" width="160" height="260" fill="#E4EEF8" rx="12" class="module-bg" stroke="#5B87B8" stroke-width="1.6"/>
+<text x="120.0" y="225" class="bold" text-anchor="middle">EEG input <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">X</tspan></text>
+<text x="120.0" y="277" class="" text-anchor="middle">58 × 1024</text>
+<text x="120.0" y="311" class="note" text-anchor="middle">(<tspan font-style="italic" font-family="Cambria,Times New Roman,serif">M</tspan> × <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">T</tspan>)</text>
+<text x="120.0" y="357" class="body" text-anchor="middle">58 通道 · 4 s</text>
+<text x="120.0" y="393" class="body" text-anchor="middle">256 Hz</text>
+</g>
+<g data-module="patch" data-label="Patch embedding">
+<title>逐通道切成长度 d 的时间 patch（N = T / d），线性映射后加上可学习的通道编码 ςᵢ（Eq. 1–2）。属于 EEGPT 编码器，推理时使用 Stage 1 后的权重 θ₁；d 与 dₑ 的数值论文未报告。</title>
+<rect x="250" y="185" width="230" height="260" fill="#E4EEF8" rx="12" class="module-bg" stroke="#5B87B8" stroke-width="1.6"/>
+<rect x="290" y="238" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="320" y="238" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="350" y="238" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="380" y="238" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="410" y="238" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="290" y="256" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="320" y="256" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="350" y="256" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="380" y="256" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="410" y="256" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="290" y="274" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="320" y="274" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="350" y="274" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="380" y="274" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<rect x="410" y="274" width="30" height="18" fill="#C9DCF0" stroke="#5B87B8" stroke-width=".8"/>
+<text x="365.0" y="225" class="bold" text-anchor="middle">Patch embedding</text>
+<text x="365.0" y="317" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">M</tspan> 通道 × <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">N</tspan> 段</text>
+<text x="365.0" y="355" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">e</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">i</tspan><tspan font-size="16.8">,</tspan><tspan font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">j</tspan><tspan dy="-6.7"> = </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">W</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">p</tspan><tspan dy="-15.8" font-size="16.8">⊤</tspan><tspan dy="9.1" font-style="italic" font-family="Cambria,Times New Roman,serif">p</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">i</tspan><tspan font-size="16.8">,</tspan><tspan font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">j</tspan></text>
+<text x="365.0" y="387" class="body" text-anchor="middle">+ <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">b</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">p</tspan><tspan dy="-6.7"> + </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">ς</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">i</tspan></text>
+<text x="365.0" y="431" class="note" text-anchor="middle" fill="#5A5A5A">权重 θ<tspan dy="6.7" font-size="16.8">1</tspan></text>
+</g>
+<g data-module="encoder" data-label="EEGPT Encoder">
+<title>分层 Transformer：先在每个时间步内聚合各通道（空间），再处理时间（Eq. 3）。10M 参数的 EEGPT，Stage 1 微调得到 θ₁，Stage 2/3 冻结。</title>
+<rect x="530" y="185" width="220" height="260" fill="#E4EEF8" rx="12" class="module-bg" stroke="#5B87B8" stroke-width="1.6"/>
+<text x="640.0" y="225" class="bold" text-anchor="middle">EEGPT Encoder</text>
+<text x="640.0" y="277" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">h</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">j</tspan><tspan dy="-6.7"> = ENC({</tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">e</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">i</tspan><tspan font-size="16.8">,</tspan><tspan font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">j</tspan><tspan dy="-6.7">}</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">i</tspan><tspan dy="-6.7">)</tspan></text>
+<text x="640.0" y="317" class="body" text-anchor="middle">逐时间步聚合通道</text>
+<text x="640.0" y="353" class="body" text-anchor="middle">空间 → 时间分层</text>
+<text x="640.0" y="391" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">H</tspan> = (<tspan font-style="italic" font-family="Cambria,Times New Roman,serif">h</tspan><tspan dy="6.7" font-size="16.8">1</tspan><tspan dy="-6.7">, …, </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">h</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">N</tspan><tspan dy="-6.7">)</tspan></text>
+<text x="640.0" y="431" class="note" text-anchor="middle" fill="#5A5A5A">权重 θ<tspan dy="6.7" font-size="16.8">1</tspan></text>
+</g>
+<g data-module="projector" data-label="Projector P_{ψ}">
+<title>两层 MLP + GELU（Eq. 4），把每个 hⱼ 映射为与 Qwen3 词嵌入同维度的连续向量 zⱼ。Stage 2 训练，Stage 3 继续训练，推理用 ψ₃。</title>
+<rect x="800" y="185" width="200" height="260" fill="#EEE7F6" rx="12" class="module-bg" stroke="#8A6FB0" stroke-width="1.6"/>
+<text x="900.0" y="225" class="bold" text-anchor="middle">Projector <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">P</tspan><tspan dy="7.3" font-size="18.2" font-style="italic" font-family="Cambria,Times New Roman,serif">ψ</tspan></text>
+<text x="900.0" y="277" class="body" text-anchor="middle">Linear → GELU</text>
+<text x="900.0" y="311" class="body" text-anchor="middle">→ Linear</text>
+<text x="900.0" y="355" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">Z</tspan> ∈ ℝ<tspan dy="-9.1" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">N</tspan><tspan font-size="16.8">×</tspan><tspan font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">d</tspan><tspan dy="4.7" font-size="11.8">LLM</tspan></text>
+<text x="900.0" y="393" class="body" text-anchor="middle">每段 EEG 一组</text>
+<text x="900.0" y="431" class="note" text-anchor="middle" fill="#5A5A5A">权重 ψ<tspan dy="6.7" font-size="16.8">3</tspan></text>
+</g>
+<g data-module="qwen" data-label="Qwen3">
+<title>读入整个嵌入序列 S，自回归生成回答。基础权重 ω 全程冻结；Stage 3 在 W_Q、W_K 上加 LoRA（r 128，α 256，dropout 0.05）。</title>
+<rect x="1130" y="185" width="200" height="430" fill="#FBF1D3" rx="12" class="module-bg" stroke="#B8973A" stroke-width="1.6"/>
+<text x="1230.0" y="225" class="bold" text-anchor="middle">Qwen3</text>
+<text x="1230.0" y="285" class="body" text-anchor="middle">4B / 8B / 14B</text>
+<text x="1230.0" y="335" class="body" text-anchor="middle">自回归生成</text>
+<text x="1230.0" y="385" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">P</tspan>(<tspan font-style="italic" font-family="Cambria,Times New Roman,serif">w</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">l</tspan><tspan dy="-6.7"> | </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">S</tspan><tspan dy="6.7" font-size="16.8">&lt;</tspan><tspan font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">l</tspan><tspan dy="-6.7">)</tspan></text>
+<text x="1230.0" y="435" class="body" text-anchor="middle">逐个输出</text>
+<text x="1230.0" y="467" class="body" text-anchor="middle">回答 token</text>
+<text x="1230.0" y="601" class="note" text-anchor="middle" fill="#5A5A5A">权重 ω + LoRA</text>
+</g>
+<g data-module="output" data-label="Response">
+<title>所有 QA 都采用先描述、后结论的 CoT 格式：先逐段描述情绪状态，再给出标签、比较、选择或匹配结论。去掉 CoT 后 14B 的多任务均值从 69.8 降到 64.0（Table 4）。</title>
+<rect x="1370" y="185" width="190" height="430" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<rect x="1385" y="285" width="160" height="90" fill="#FFF" rx="8" stroke="#B8973A" stroke-width="1.4"/>
+<text x="1465" y="321" class="body" text-anchor="middle">① 逐段描述</text>
+<text x="1465" y="355" class="body" text-anchor="middle">情绪状态</text>
+<path d="M1465,375 L1465,410" class="forward" marker-end="url(#forward)"/>
+<rect x="1385" y="410" width="160" height="90" fill="#FFF" rx="8" stroke="#B8973A" stroke-width="1.4"/>
+<text x="1465" y="446" class="body" text-anchor="middle">② 比较 / 选择</text>
+<text x="1465" y="480" class="body" text-anchor="middle">/ 匹配 → 结论</text>
+<text x="1465.0" y="225" class="bold" text-anchor="middle">Response</text>
+<text x="1465.0" y="265" class="note" text-anchor="middle">CoT 回答格式</text>
+<text x="1465.0" y="545" class="note" text-anchor="middle">IED / EPC / ESS</text>
+<text x="1465.0" y="579" class="note" text-anchor="middle">EIM / ESR</text>
+</g>
+<path d="M200,315 L250,315" class="forward" marker-end="url(#forward)"/>
+<path d="M480,315 L530,315" class="forward" marker-end="url(#forward)"/>
+<path d="M750,315 L800,315" class="forward" marker-end="url(#forward)"/>
+<path d="M1330,395 L1370,395" class="forward" marker-end="url(#forward)"/>
+<g data-module="language" data-label="Text instruction">
+<title>自然语言问题，按 Table 1 的五类任务模板组织，可引用多段 EEG（&lt;EEG 1&gt;、&lt;EEG 2&gt;…）。不包含情绪真值标签。</title>
+<rect x="40" y="485" width="360" height="130" fill="#E5F2E6" rx="12" class="module-bg" stroke="#5E9A64" stroke-width="1.6"/>
+<text x="220.0" y="525" class="bold" text-anchor="middle">Text instruction</text>
+<text x="220.0" y="567" class="body" text-anchor="middle">问题与上下文（自然语言）</text>
+</g>
+<g data-module="embedding" data-label="Tokenizer + Embedding">
+<title>文本和 &lt;eeg_start&gt; / &lt;eeg_end&gt; 特殊 token 都由 Qwen3 的 tokenizer 和词嵌入表得到，属于 ω。EEG 向量不经过 tokenizer。</title>
+<rect x="460" y="485" width="300" height="130" fill="#E5F2E6" rx="12" class="module-bg" stroke="#5E9A64" stroke-width="1.6"/>
+<text x="610.0" y="525" class="bold" text-anchor="middle">Tokenizer + Embedding</text>
+<text x="610.0" y="565" class="body" text-anchor="middle">文本 → <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">n</tspan> × <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">d</tspan><tspan dy="6.7" font-size="16.8">LLM</tspan></text>
+<text x="610.0" y="601" class="note" text-anchor="middle" fill="#5A5A5A">权重 ω（词表）</text>
+</g>
+<path d="M400,550 L460,550" class="forward" marker-end="url(#forward)"/>
+<path d="M610,615 L610,675" class="forward" marker-end="url(#forward)"/>
+<text x="622" y="655" class="note" text-anchor="start">文本嵌入</text>
+<path d="M900,445 L900,675" class="forward" marker-end="url(#forward)"/>
+<text x="914" y="570" class="" text-anchor="start"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">Z</tspan></text>
+<path d="M1230,675 L1230,615" class="forward" marker-end="url(#forward)"/>
+<g data-module="sequence" data-label="Input sequence S">
+<title>按 Eq. 5 沿序列轴拼接：文本嵌入、&lt;eeg_start&gt;、z₁…z_N、&lt;eeg_end&gt;、后续文本。EPC/ESS/EIM/ESR 一条序列含 2–3 个 EEG 块，每块各自带边界 token。</title>
+<rect x="40" y="675" width="1520" height="185" fill="#FFF" rx="12" stroke="#9AA5B1" stroke-width="1.6" class="module-bg"/>
+<text x="60" y="709" class="bold" text-anchor="start">Input sequence <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">S</tspan>（Eq. 5，沿序列轴拼接）</text>
+<rect x="60" y="727" width="130" height="44" fill="#E5F2E6" stroke="#555" stroke-width="1"/>
+<text x="125.0" y="757" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">w</tspan><tspan dy="6.7" font-size="16.8">1</tspan><tspan dy="-6.7"> … </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">w</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">k</tspan></text>
+<rect x="190" y="727" width="175" height="44" fill="#B5D9B9" stroke="#555" stroke-width="1"/>
+<text x="277.5" y="757" class="mono" text-anchor="middle">&lt;eeg_start&gt;</text>
+<rect x="365" y="727" width="140" height="44" fill="#D9CCEB" stroke="#555" stroke-width="1"/>
+<text x="435.0" y="757" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan><tspan dy="6.7" font-size="16.8">1</tspan><tspan dy="-6.7"> … </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">N</tspan></text>
+<rect x="505" y="727" width="150" height="44" fill="#B5D9B9" stroke="#555" stroke-width="1"/>
+<text x="580.0" y="757" class="mono" text-anchor="middle">&lt;eeg_end&gt;</text>
+<rect x="655" y="727" width="90" height="44" fill="#E5F2E6" stroke="#555" stroke-width="1"/>
+<text x="700.0" y="757" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">w</tspan> …</text>
+<rect x="745" y="727" width="175" height="44" fill="#B5D9B9" stroke="#555" stroke-width="1"/>
+<text x="832.5" y="757" class="mono" text-anchor="middle">&lt;eeg_start&gt;</text>
+<rect x="920" y="727" width="150" height="44" fill="#D9CCEB" stroke="#555" stroke-width="1"/>
+<text x="995.0" y="757" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan>′<tspan dy="6.7" font-size="16.8">1</tspan><tspan dy="-6.7"> … </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan>′<tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">N</tspan></text>
+<rect x="1070" y="727" width="150" height="44" fill="#B5D9B9" stroke="#555" stroke-width="1"/>
+<text x="1145.0" y="757" class="mono" text-anchor="middle">&lt;eeg_end&gt;</text>
+<rect x="1220" y="727" width="120" height="44" fill="#E5F2E6" stroke="#555" stroke-width="1"/>
+<text x="1280.0" y="757" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">w</tspan> …</text>
+<path d="M194,776 V784 H651 V776" fill="none" stroke="#555" stroke-width="1.4"/>
+<text x="422.5" y="810" class="note" text-anchor="middle">EEG 块 1</text>
+<path d="M749,776 V784 H1216 V776" fill="none" stroke="#555" stroke-width="1.4"/>
+<text x="982.5" y="810" class="note" text-anchor="middle">EEG 块 2（EPC / ESS / EIM / ESR 含 2–3 块）</text>
+<rect x="60" y="825" width="24" height="24" fill="#E5F2E6" stroke="#555" stroke-width="1"/>
+<text x="94" y="846" class="note" text-anchor="start">文本 token</text>
+<rect x="250" y="825" width="24" height="24" fill="#B5D9B9" stroke="#555" stroke-width="1"/>
+<text x="284" y="846" class="note" text-anchor="start">特殊 token（词表内，经 Embedding）</text>
+<rect x="690" y="825" width="24" height="24" fill="#D9CCEB" stroke="#555" stroke-width="1"/>
+<text x="724" y="846" class="note" text-anchor="start">EEG 连续向量 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan>（Projector 输出，不经 tokenizer）</text>
+</g>
+</g>
+<g id="section-s1" data-section="s1">
+<rect x="20" y="900" width="1560" height="335" fill="none" stroke="#C9CED4" stroke-width="1.4" stroke-dasharray="7 5"/>
+<text x="40" y="942" class="heading" text-anchor="start">B Stage 1：EEG 编码器情绪微调</text>
+<text x="1560" y="942" class="note" text-anchor="end">§3.2.2 · Eq. 6–7 · §4.1</text>
+<g data-module="s1-data" data-label="EEG 片段 X">
+<title>SEED-VII 预处理后的 24,444 个训练片段，7 类情绪（§3.1）。训练 50 epoch，AdamW，lr 1e-4，batch 64（§4.1）。</title>
+<rect x="40" y="975" width="220" height="140" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="150.0" y="1015" class="bold" text-anchor="middle">EEG 片段 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">X</tspan></text>
+<text x="150.0" y="1057" class="body" text-anchor="middle">24,444 段（4 s）</text>
+<text x="150.0" y="1093" class="body" text-anchor="middle">7 类情绪</text>
+</g>
+<g data-module="s1-encoder" data-label="EEGPT Encoder">
+<title>在预训练 EEGPT 上用分类目标微调，得到情绪适配权重 θ₁。论文摘要称之为 emotion-discriminative pretraining，实质是对预训练编码器的微调。</title>
+<rect x="320" y="975" width="240" height="140" fill="#E4EEF8" rx="12" class="module-bg" stroke="#C8743A" stroke-width="3"/>
+<text x="440.0" y="1015" class="bold" text-anchor="middle">EEGPT Encoder</text>
+<text x="440.0" y="1057" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">H</tspan> = ENC<tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">θ</tspan><tspan dy="-6.7">(</tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">X</tspan>)</text>
+<text x="440.0" y="1093" class="body" text-anchor="middle">由预训练权重起步</text>
+<rect x="332" y="959" width="88" height="32" fill="#C8743A" rx="16"/>
+<text x="376" y="983" class="body bold" text-anchor="middle" fill="#FFF">可训练</text>
+</g>
+<g data-module="s1-head" data-label="Classifier C">
+<title>线性分类头（Eq. 6），只在 Stage 1 使用，之后丢弃。h 如何从序列 H 读出论文未报告。</title>
+<rect x="620" y="975" width="240" height="140" fill="#E4EEF8" rx="12" class="module-bg" stroke="#C8743A" stroke-width="3"/>
+<text x="740.0" y="1015" class="bold" text-anchor="middle">Classifier <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">C</tspan></text>
+<text x="740.0" y="1057" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">ŷ</tspan> = softmax(<tspan font-style="italic" font-family="Cambria,Times New Roman,serif">W</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">c</tspan><tspan dy="-6.7" font-style="italic" font-family="Cambria,Times New Roman,serif">h</tspan> + <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">b</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">c</tspan><tspan dy="-6.7">)</tspan></text>
+<text x="740.0" y="1093" class="body" text-anchor="middle">7 类</text>
+<rect x="632" y="959" width="88" height="32" fill="#C8743A" rx="16"/>
+<text x="676" y="983" class="body bold" text-anchor="middle" fill="#FFF">可训练</text>
+</g>
+<g data-module="s1-loss" data-label="Classification loss">
+<title>交叉熵（Eq. 7），同时更新编码器 θ 和分类头 C。</title>
+<rect x="1230" y="975" width="330" height="140" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="1395.0" y="1015" class="bold" text-anchor="middle">Classification loss</text>
+<text x="1395.0" y="1061" class="body" text-anchor="middle">ℒ<tspan dy="6.7" font-size="16.8">cls</tspan><tspan dy="-6.7"> = −Σ</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">c</tspan><tspan dy="-6.7"> </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">y</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">c</tspan><tspan dy="-6.7"> log </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">ŷ</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">c</tspan></text>
+</g>
+<path d="M260,1025 L320,1025" class="forward" marker-end="url(#forward)"/>
+<path d="M560,1025 L620,1025" class="forward" marker-end="url(#forward)"/>
+<path d="M860,1025 L1230,1025" class="forward" marker-end="url(#forward)"/>
+<path d="M1230,1075 L860,1075" class="gradient" marker-end="url(#gradient)"/>
+<path d="M620,1075 L560,1075" class="gradient" marker-end="url(#gradient)"/>
+<g data-module="s1-target" data-label="情绪标签 y">
+<title>SEED-VII 的情绪真值，只作训练监督。</title>
+<rect x="1300" y="1145" width="260" height="70" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="1430.0" y="1175" class="bold" text-anchor="middle">情绪标签 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">y</tspan></text>
+<text x="1430.0" y="1205" class="note" text-anchor="middle">7 类真值</text>
+</g>
+<path d="M1430,1145 L1430,1115" class="supervise" marker-end="url(#supervise)"/>
+<text x="1045" y="1171" class="note" text-anchor="middle">Projector / Qwen3</text>
+<text x="1045" y="1203" class="note" text-anchor="middle">冻结，不在此路径</text>
+<text x="740" y="1190" class="note" text-anchor="middle">C 训练后丢弃</text>
+</g>
+<g id="section-s2" data-section="s2">
+<rect x="20" y="1260" width="1560" height="335" fill="none" stroke="#C9CED4" stroke-width="1.4" stroke-dasharray="7 5"/>
+<text x="40" y="1302" class="heading" text-anchor="start">C Stage 2：跨模态对齐</text>
+<text x="1560" y="1302" class="note" text-anchor="end">§3.2.2 · Eq. 8 · §4.1</text>
+<g data-module="s2-data" data-label="EEG 片段 X">
+<title>由前四类任务生成的 10,000 条训练 QA（§3.1），ESR 不参与训练。Adam，lr 2e-4，batch 16，余弦退火（§4.1）。</title>
+<rect x="40" y="1335" width="220" height="140" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="150.0" y="1375" class="bold" text-anchor="middle">EEG 片段 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">X</tspan></text>
+<text x="150.0" y="1417" class="body" text-anchor="middle">10,000 条 QA</text>
+<text x="150.0" y="1453" class="body" text-anchor="middle">IED/EPC/ESS/EIM</text>
+</g>
+<g data-module="s2-encoder" data-label="EEGPT Encoder">
+<title>继承 Stage 1 的 θ₁ 并冻结，参数不更新。</title>
+<rect x="320" y="1335" width="240" height="140" fill="#E4EEF8" rx="12" class="module-bg" stroke="#6F7C8B" stroke-width="2.2" stroke-dasharray="8 5"/>
+<text x="440.0" y="1375" class="bold" text-anchor="middle">EEGPT Encoder</text>
+<text x="440.0" y="1417" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">H</tspan> = ENC<tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">θ</tspan><tspan dy="4.7" font-size="11.8">1</tspan><tspan dy="-11.4">(</tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">X</tspan>)</text>
+<text x="440.0" y="1453" class="body" text-anchor="middle">Stage 1 权重 θ<tspan dy="6.7" font-size="16.8">1</tspan></text>
+<rect x="332" y="1319" width="70" height="32" fill="#FFF" rx="16" stroke="#6F7C8B" stroke-width="1.6"/>
+<text x="367" y="1343" class="body" text-anchor="middle" fill="#4F5B68">冻结</text>
+</g>
+<g data-module="s2-proj" data-label="Projector P_{ψ}">
+<title>本阶段唯一可训练的模块，训练结果记为 ψ₂。初始化方式论文未报告。</title>
+<rect x="620" y="1335" width="240" height="140" fill="#EEE7F6" rx="12" class="module-bg" stroke="#C8743A" stroke-width="3"/>
+<text x="740.0" y="1375" class="bold" text-anchor="middle">Projector <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">P</tspan><tspan dy="7.3" font-size="18.2" font-style="italic" font-family="Cambria,Times New Roman,serif">ψ</tspan></text>
+<text x="740.0" y="1417" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan> = <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">P</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">ψ</tspan><tspan dy="-6.7">(</tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">h</tspan>)</text>
+<text x="740.0" y="1453" class="body" text-anchor="middle">两层 MLP</text>
+<rect x="632" y="1319" width="88" height="32" fill="#C8743A" rx="16"/>
+<text x="676" y="1343" class="body bold" text-anchor="middle" fill="#FFF">可训练</text>
+</g>
+<g data-module="s2-qwen" data-label="Qwen3 ω">
+<title>预训练 Qwen3，参数冻结。语言损失对输入 z 的梯度要穿过 Qwen3 才能到达 Projector，所以只能冻结参数，不能切断梯度（由训练设置推出，原文未直接表述）。</title>
+<rect x="920" y="1335" width="250" height="140" fill="#FBF1D3" rx="12" class="module-bg" stroke="#6F7C8B" stroke-width="2.2" stroke-dasharray="8 5"/>
+<text x="1045.0" y="1375" class="bold" text-anchor="middle">Qwen3 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">ω</tspan></text>
+<text x="1045.0" y="1417" class="body" text-anchor="middle">梯度穿过，传到 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan></text>
+<text x="1045.0" y="1453" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">ω</tspan> 不更新</text>
+<rect x="932" y="1319" width="70" height="32" fill="#FFF" rx="16" stroke="#6F7C8B" stroke-width="1.6"/>
+<text x="967" y="1343" class="body" text-anchor="middle" fill="#4F5B68">冻结</text>
+</g>
+<g data-module="s2-loss" data-label="LM loss（回答 token）">
+<title>回答 token 的自回归负对数似然（Eq. 8）。</title>
+<rect x="1230" y="1335" width="330" height="140" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="1395.0" y="1375" class="bold" text-anchor="middle">LM loss（回答 token）</text>
+<text x="1395.0" y="1421" class="body" text-anchor="middle">ℒ<tspan dy="6.7" font-size="16.8">LM</tspan><tspan dy="-6.7"> = −Σ</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">l</tspan><tspan dy="-6.7"> log </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">P</tspan>(<tspan font-style="italic" font-family="Cambria,Times New Roman,serif">w</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">l</tspan><tspan dy="-6.7"> | </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">S</tspan><tspan dy="6.7" font-size="16.8">&lt;</tspan><tspan font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">l</tspan><tspan dy="-6.7">)</tspan></text>
+</g>
+<path d="M260,1385 L320,1385" class="forward" marker-end="url(#forward)"/>
+<path d="M560,1385 L620,1385" class="forward" marker-end="url(#forward)"/>
+<path d="M860,1385 L920,1385" class="forward" marker-end="url(#forward)"/>
+<path d="M1170,1385 L1230,1385" class="forward" marker-end="url(#forward)"/>
+<path d="M1230,1435 L1170,1435" class="gradient" marker-end="url(#gradient)"/>
+<path d="M920,1435 L860,1435" class="gradient" marker-end="url(#gradient)"/>
+<g data-module="s2-question" data-label="问题文本">
+<title>QA 中的问题文本，经 Tokenizer + Embedding 与 EEG 向量拼接（完整拼接见 A 区）。</title>
+<rect x="920" y="1505" width="190" height="70" fill="#E5F2E6" rx="12" class="module-bg" stroke="#5E9A64" stroke-width="1.6"/>
+<text x="1015.0" y="1535" class="bold" text-anchor="middle">问题文本</text>
+<text x="1015.0" y="1565" class="note" text-anchor="middle">经 Embedding</text>
+</g>
+<path d="M1015,1505 L1015,1475" class="forward" marker-end="url(#forward)"/>
+<g data-module="s2-target" data-label="参考回答（CoT）">
+<title>QA 的参考回答，CoT 格式，作为 Eq. 8 的目标 token。</title>
+<rect x="1300" y="1505" width="260" height="70" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="1430.0" y="1535" class="bold" text-anchor="middle">参考回答（CoT）</text>
+<text x="1430.0" y="1565" class="note" text-anchor="middle">先描述，再结论</text>
+</g>
+<path d="M1430,1505 L1430,1475" class="supervise" marker-end="url(#supervise)"/>
+</g>
+<g id="section-s3" data-section="s3">
+<rect x="20" y="1620" width="1560" height="335" fill="none" stroke="#C9CED4" stroke-width="1.4" stroke-dasharray="7 5"/>
+<text x="40" y="1662" class="heading" text-anchor="start">D Stage 3：端到端指令微调</text>
+<text x="1560" y="1662" class="note" text-anchor="end">§3.2.2 · Eq. 8 · §4.1</text>
+<g data-module="s3-data" data-label="EEG 片段 X">
+<title>3,000 个训练样本，具体筛选和任务分布论文未报告。Projector 与 LoRA 均用 Adam，lr 2e-4，batch 16，余弦退火。</title>
+<rect x="40" y="1695" width="220" height="140" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="150.0" y="1735" class="bold" text-anchor="middle">EEG 片段 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">X</tspan></text>
+<text x="150.0" y="1777" class="body" text-anchor="middle">3,000 条 QA</text>
+<text x="150.0" y="1813" class="body" text-anchor="middle">任务分布未报告</text>
+</g>
+<g data-module="s3-encoder" data-label="EEGPT Encoder">
+<title>继续冻结 Stage 1 的 θ₁。</title>
+<rect x="320" y="1695" width="240" height="140" fill="#E4EEF8" rx="12" class="module-bg" stroke="#6F7C8B" stroke-width="2.2" stroke-dasharray="8 5"/>
+<text x="440.0" y="1735" class="bold" text-anchor="middle">EEGPT Encoder</text>
+<text x="440.0" y="1777" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">H</tspan> = ENC<tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">θ</tspan><tspan dy="4.7" font-size="11.8">1</tspan><tspan dy="-11.4">(</tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">X</tspan>)</text>
+<text x="440.0" y="1813" class="body" text-anchor="middle">仍为 θ<tspan dy="6.7" font-size="16.8">1</tspan></text>
+<rect x="332" y="1679" width="70" height="32" fill="#FFF" rx="16" stroke="#6F7C8B" stroke-width="1.6"/>
+<text x="367" y="1703" class="body" text-anchor="middle" fill="#4F5B68">冻结</text>
+</g>
+<g data-module="s3-proj" data-label="Projector P_{ψ}">
+<title>从 ψ₂ 继续训练，得到最终的 ψ₃。</title>
+<rect x="620" y="1695" width="240" height="140" fill="#EEE7F6" rx="12" class="module-bg" stroke="#C8743A" stroke-width="3"/>
+<text x="740.0" y="1735" class="bold" text-anchor="middle">Projector <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">P</tspan><tspan dy="7.3" font-size="18.2" font-style="italic" font-family="Cambria,Times New Roman,serif">ψ</tspan></text>
+<text x="740.0" y="1777" class="body" text-anchor="middle"><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan> = <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">P</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">ψ</tspan><tspan dy="-6.7">(</tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">h</tspan>)</text>
+<text x="740.0" y="1813" class="body" text-anchor="middle">从 ψ<tspan dy="6.7" font-size="16.8">2</tspan><tspan dy="-6.7"> 继续训练</tspan></text>
+<rect x="632" y="1679" width="88" height="32" fill="#C8743A" rx="16"/>
+<text x="676" y="1703" class="body bold" text-anchor="middle" fill="#FFF">可训练</text>
+</g>
+<g data-module="s3-qwen" data-label="Qwen3 ω + LoRA">
+<title>基础权重 ω 冻结；只训练加在 W_Q、W_K 上的 LoRA（r 128，α 256，dropout 0.05）。不是全参数微调。</title>
+<rect x="920" y="1695" width="250" height="140" fill="#FBF1D3" rx="12" class="module-bg" stroke="#6F7C8B" stroke-width="2.2" stroke-dasharray="8 5"/>
+<rect x="936" y="1747" width="218" height="76" fill="#FCEBDD" rx="8" stroke="#C8743A" stroke-width="3"/>
+<text x="1045.0" y="1735" class="bold" text-anchor="middle">Qwen3 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">ω</tspan> + LoRA</text>
+<text x="1045.0" y="1777" class="body" text-anchor="middle">LoRA：<tspan font-style="italic" font-family="Cambria,Times New Roman,serif">W</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">Q</tspan><tspan dy="-6.7">, </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">W</tspan><tspan dy="6.7" font-size="16.8" font-style="italic" font-family="Cambria,Times New Roman,serif">K</tspan></text>
+<text x="1045.0" y="1811" class="body" text-anchor="middle">r 128 · α 256</text>
+<rect x="932" y="1679" width="70" height="32" fill="#FFF" rx="16" stroke="#6F7C8B" stroke-width="1.6"/>
+<text x="967" y="1703" class="body" text-anchor="middle" fill="#4F5B68">冻结</text>
+</g>
+<g data-module="s3-loss" data-label="LM loss（回答 token）">
+<title>与 Stage 2 相同的语言建模目标，梯度更新 Projector 与 LoRA。</title>
+<rect x="1230" y="1695" width="330" height="140" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="1395.0" y="1735" class="bold" text-anchor="middle">LM loss（回答 token）</text>
+<text x="1395.0" y="1777" class="body" text-anchor="middle">同 Eq. 8</text>
+<text x="1395.0" y="1813" class="body" text-anchor="middle">更新 ψ 与 LoRA</text>
+</g>
+<path d="M260,1745 L320,1745" class="forward" marker-end="url(#forward)"/>
+<path d="M560,1745 L620,1745" class="forward" marker-end="url(#forward)"/>
+<path d="M860,1745 L920,1745" class="forward" marker-end="url(#forward)"/>
+<path d="M1170,1745 L1230,1745" class="forward" marker-end="url(#forward)"/>
+<path d="M1230,1795 L1154,1795" class="gradient" marker-end="url(#gradient)"/>
+<path d="M920,1795 L860,1795" class="gradient" marker-end="url(#gradient)"/>
+<g data-module="s3-question" data-label="问题文本">
+<title>QA 中的问题文本，经 Tokenizer + Embedding 与 EEG 向量拼接（完整拼接见 A 区）。</title>
+<rect x="920" y="1865" width="190" height="70" fill="#E5F2E6" rx="12" class="module-bg" stroke="#5E9A64" stroke-width="1.6"/>
+<text x="1015.0" y="1895" class="bold" text-anchor="middle">问题文本</text>
+<text x="1015.0" y="1925" class="note" text-anchor="middle">经 Embedding</text>
+</g>
+<path d="M1015,1865 L1015,1835" class="forward" marker-end="url(#forward)"/>
+<g data-module="s3-target" data-label="参考回答（CoT）">
+<title>QA 的参考回答，CoT 格式。</title>
+<rect x="1300" y="1865" width="260" height="70" fill="#FFFFFF" rx="12" class="module-bg" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="1430.0" y="1895" class="bold" text-anchor="middle">参考回答（CoT）</text>
+<text x="1430.0" y="1925" class="note" text-anchor="middle">先描述，再结论</text>
+</g>
+<path d="M1430,1865 L1430,1835" class="supervise" marker-end="url(#supervise)"/>
+</g>
+<path d="M530,1115 L530,1335" class="inherit" marker-end="url(#inherit)"/>
+<text x="515" y="1175" class="note" text-anchor="end">θ<tspan dy="6.7" font-size="16.8">1</tspan><tspan dy="-6.7"> 继承</tspan></text>
+<text x="515" y="1207" class="note" text-anchor="end">此后冻结</text>
+<path d="M530,1475 L530,1695" class="inherit" marker-end="url(#inherit)"/>
+<text x="515" y="1550" class="note" text-anchor="end">θ<tspan dy="6.7" font-size="16.8">1</tspan><tspan dy="-6.7"> 不变</tspan></text>
+<path d="M820,1475 L820,1695" class="inherit" marker-end="url(#inherit)"/>
+<text x="805" y="1535" class="note" text-anchor="end">ψ<tspan dy="6.7" font-size="16.8">2</tspan><tspan dy="-6.7"> 继承</tspan></text>
+<text x="805" y="1567" class="note" text-anchor="end">继续训练</text>
+<path d="M1140,1475 L1140,1695" class="inherit" marker-end="url(#inherit)"/>
+<text x="1152" y="1535" class="note" text-anchor="start">ω 不变</text>
+<text x="1152" y="1567" class="note" text-anchor="start">+ LoRA</text>
+<g id="section-evaluation" data-section="evaluation">
+<rect x="20" y="1980" width="1560" height="265" fill="none" stroke="#C9CED4" stroke-width="1.4" stroke-dasharray="7 5"/>
+<text x="40" y="2022" class="heading" text-anchor="start">E 关键结果（%）</text>
+<text x="1560" y="2022" class="note" text-anchor="end">Table 2–4 · §4.2–4.3</text>
+<path d="M540 2046V2228" stroke="#C9CED4" stroke-dasharray="7 5"/>
+<path d="M1060 2046V2228" stroke="#C9CED4" stroke-dasharray="7 5"/>
+<text x="40" y="2070" class="bold" text-anchor="start">IED · 2,761 测试段 · Balanced Acc.</text>
+<text x="40" y="2110" class="body" text-anchor="start">Random 14.29 · NeuroLM 25.39</text>
+<text x="40" y="2148" class="body" text-anchor="start">E²-LLM：4B 54.63 · 8B 61.73</text>
+<text x="40" y="2186" class="body" text-anchor="start">14B 61.05（Cohen&#x27;s κ 最高 55.14）</text>
+<text x="560" y="2070" class="bold" text-anchor="start">多任务 500 条 · ESR<tspan dy="-9.9" font-size="18.2">†</tspan><tspan dy="9.9"> 167 条</tspan></text>
+<text x="560" y="2110" class="body" text-anchor="start">14B：EPC 72.39 · ESS 79.41</text>
+<text x="560" y="2148" class="body" text-anchor="start">EIM 73.65（4B 最高 77.84）</text>
+<text x="560" y="2186" class="body" text-anchor="start">ESR<tspan dy="-9.1" font-size="16.8">†</tspan><tspan dy="9.1">：4B 34.13 · 8B 41.92 · 14B 53.89</tspan></text>
+<text x="1080" y="2070" class="bold" text-anchor="start">消融 · 14B · 四项多任务均值</text>
+<text x="1080" y="2110" class="body" text-anchor="start">完整模型 69.8</text>
+<text x="1080" y="2148" class="body" text-anchor="start">w/o Stage 1 30.8（IED 接近随机）</text>
+<text x="1080" y="2186" class="body" text-anchor="start">w/o Stage 2 63.7（IED 61.0 → 42.8）</text>
+<text x="1080" y="2224" class="body" text-anchor="start">w/o Stage 3 59.3 · w/o CoT 64.0</text>
+</g>
+<path d="M40,2282 L100,2282" class="forward" marker-end="url(#forward)"/>
+<text x="116" y="2290" class="body" text-anchor="start">前向计算</text>
+<path d="M330,2282 L390,2282" class="supervise" marker-end="url(#supervise)"/>
+<text x="406" y="2290" class="body" text-anchor="start">监督信号（标签 / 参考回答）</text>
+<path d="M790,2282 L850,2282" class="gradient" marker-end="url(#gradient)"/>
+<text x="866" y="2290" class="body" text-anchor="start">梯度回传（机制示意）</text>
+<path d="M1180,2282 L1240,2282" class="inherit" marker-end="url(#inherit)"/>
+<text x="1256" y="2290" class="body" text-anchor="start">参数继承（跨阶段）</text>
+<rect x="40" y="2316" width="52" height="30" fill="#FFF" rx="6" stroke="#C8743A" stroke-width="3"/>
+<text x="104" y="2340" class="body" text-anchor="start">可训练</text>
+<rect x="210" y="2316" width="52" height="30" fill="#FFF" rx="6" stroke="#6F7C8B" stroke-width="2.2" stroke-dasharray="8 5"/>
+<text x="274" y="2340" class="body" text-anchor="start">冻结</text>
+<rect x="360" y="2316" width="52" height="30" fill="#FFF" rx="6" stroke="#9AA5B1" stroke-width="1.6"/>
+<text x="424" y="2340" class="body" text-anchor="start">数据 / 损失 / 运算</text>
+<text x="680" y="2340" class="body" text-anchor="start">填充色：</text>
+<rect x="780" y="2316" width="52" height="30" fill="#E4EEF8" rx="6" stroke="#5B87B8" stroke-width="1.4"/>
+<text x="844" y="2340" class="body" text-anchor="start">EEG 侧</text>
+<rect x="954" y="2316" width="52" height="30" fill="#EEE7F6" rx="6" stroke="#8A6FB0" stroke-width="1.4"/>
+<text x="1018" y="2340" class="body" text-anchor="start">Projector</text>
+<rect x="1158" y="2316" width="52" height="30" fill="#E5F2E6" rx="6" stroke="#5E9A64" stroke-width="1.4"/>
+<text x="1222" y="2340" class="body" text-anchor="start">文本侧</text>
+<rect x="1332" y="2316" width="52" height="30" fill="#FBF1D3" rx="6" stroke="#B8973A" stroke-width="1.4"/>
+<text x="1396" y="2340" class="body" text-anchor="start">Qwen3</text>
+<text x="40" y="2402" class="note" text-anchor="start">注：① 依据论文 Fig. 1、§3.1–3.2、§4 重绘，省略 batch 维；58 × 1024 = 58 通道 × 4 s × 256 Hz，由 §3.1 推算。</text>
+<text x="40" y="2436" class="note" text-anchor="start">② patch 长度 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">d</tspan>、嵌入维度 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">d</tspan><tspan dy="6.7" font-size="16.8">e</tspan><tspan dy="-6.7">、Stage 1 分类头对序列 </tspan><tspan font-style="italic" font-family="Cambria,Times New Roman,serif">H</tspan> 的读出方式、Projector 的初始化方式，论文均未报告。</text>
+<text x="40" y="2470" class="note" text-anchor="start">③ 梯度线为机制示意。Stage 2 中梯度穿过冻结的 Qwen3 到达 <tspan font-style="italic" font-family="Cambria,Times New Roman,serif">z</tspan>，是由“冻结 LLM、训练 Projector”推出的，原文未直接表述。</text>
+<text x="40" y="2504" class="note" text-anchor="start">④ &lt;eeg_start&gt; / &lt;eeg_end&gt; 的嵌入是否随训练更新，论文未报告。</text>
+<text x="40" y="2538" class="note" text-anchor="start">⑤ 测试划分未说明是否跨受试者；结果均为离线任务评测，不构成临床验证。</text>
+<text x="40" y="2572" class="note" text-anchor="start">† ESR 在训练中未出现的是任务形式（zero-shot），不是 EEG 数据本身。</text>
+</svg>
